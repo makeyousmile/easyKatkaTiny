@@ -1,0 +1,9 @@
+services:
+  easykatka:
+    build: .
+    container_name: easykatka
+    env_file:
+      - .env
+    volumes:
+      - ./account_id:/app/account_id:ro
+    restart: unless-stopped
