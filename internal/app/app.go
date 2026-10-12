@@ -47,6 +47,8 @@ func Run() error {
 	if telegramToken != "" {
 		if notify := telegramNotifier(telegramToken); notify != nil {
 			go monitorMatches(accountStore, heroes, notify)
+		} else {
+			go monitorMatches(accountStore, heroes, nil)
 		}
 		return runTelegramBot(telegramToken, accountStore, heroes)
 	}

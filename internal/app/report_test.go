@@ -39,3 +39,20 @@ func TestBuildPlayerTable_BasicOutput(t *testing.T) {
 		t.Fatalf("expected K/D/A in output: %q", out)
 	}
 }
+
+func TestWriteMatches_WithStreak(t *testing.T) {
+	matches := []recentMatch{
+		{HeroID: 1, RadiantWin: true, PlayerSlot: 0},
+		{HeroID: 1, RadiantWin: true, PlayerSlot: 0},
+		{HeroID: 1, RadiantWin: true, PlayerSlot: 0},
+	}
+	heroes := map[int]string{1: "Axe"}
+	var builder strings.Builder
+	writeMatches(&builder, matches, heroes, "Player", true)
+	out := builder.String()
+
+	if !strings.Contains(out, "СЕРИЯ ПОБЕД: 3 победы подряд!") {
+		t.Fatalf("expected streak in output: %q", out)
+	}
+}
+

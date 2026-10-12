@@ -10,11 +10,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 	accountIDs := accountStore.Get()
 	lastMatch := make(map[int64]int64, len(accountIDs))
 	names := make(map[int64]string, len(accountIDs))
-	if notify == nil {
-		notify = func(msg matchNotification) {
-			fmt.Println(msg.Text)
-		}
-	}
+	var startupStreaks []playerStreak
 	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
 		if err != nil {
@@ -29,6 +25,31 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 		}
 		if len(matches) > 0 {
 			lastMatch[accountID] = matches[0].MatchID
+			isWin, streak := calcStreak(matches)
+			if streak >= 3 {
+				startupStreaks = append(startupStreaks, playerStreak{
+					Name:   names[accountID],
+					IsWin:  isWin,
+					Streak: streak,
+				})
+			}
+		}
+	}
+
+	if len(startupStreaks) > 0 {
+		plainText := formatStartupStreaksMessage(startupStreaks, false)
+		fmt.Println(plainText)
+		if notify != nil {
+			notify(matchNotification{
+				Text:      formatStartupStreaksMessage(startupStreaks, true),
+				ParseMode: "HTML",
+			})
+		}
+	}
+
+	if notify == nil {
+		notify = func(msg matchNotification) {
+			fmt.Println(msg.Text)
 		}
 	}
 
@@ -69,8 +90,13 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 				newMatches = append(newMatches, m)
 			}
 			for i := len(newMatches) - 1; i >= 0; i-- {
+				summary := formatMatchSummary(names[accountID], newMatches[i], heroes)
+				isWin, streak := calcStreak(matches[i:])
+				if badge := formatStreakBadge(isWin, streak, false); badge != "" {
+					summary += "\n" + badge
+				}
 				notify(matchNotification{
-					Text:      formatMatchSummary(names[accountID], newMatches[i], heroes),
+					Text:      summary,
 					MatchID:   newMatches[i].MatchID,
 					AccountID: accountID,
 				})

@@ -82,6 +82,8 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 						continue
 					}
 					winrate := calcWinrate(matches, 20)
+					isWin, streak := calcStreak(matches)
+					streakBadge := formatStreakBadge(isWin, streak, true)
 					if len(matches) > 10 {
 						matches = matches[:10]
 					}
@@ -90,7 +92,12 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 					if name == "" {
 						name = "неизвестный"
 					}
-					header := fmt.Sprintf("<b>Последние матчи (%s)</b>\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), winrate)
+					var header string
+					if streakBadge != "" {
+						header = fmt.Sprintf("<b>Последние матчи (%s)</b>\n%s\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), streakBadge, winrate)
+					} else {
+						header = fmt.Sprintf("<b>Последние матчи (%s)</b>\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), winrate)
+					}
 					if player.AvatarFull != "" {
 						if err := sendTelegramPhoto(apiBase, upd.Message.Chat.ID, player.AvatarFull, header, "HTML", nil); err != nil {
 							return err
@@ -334,7 +341,7 @@ func telegramNotifier(token string) func(matchNotification) {
 	apiBase := fmt.Sprintf(telegramBaseURL, token)
 	return func(msg matchNotification) {
 		replyMarkup := buildMatchDetailsMarkup(msg)
-		if err := sendTelegramMessage(apiBase, chatID, msg.Text, "", replyMarkup); err != nil {
+		if err := sendTelegramMessage(apiBase, chatID, msg.Text, msg.ParseMode, replyMarkup); err != nil {
 			fmt.Fprintf(os.Stderr, "telegram notify error: %s\n", err.Error())
 		}
 	}

@@ -12,6 +12,7 @@ type matchNotification struct {
 	Text      string
 	MatchID   int64
 	AccountID int64
+	ParseMode string
 }
 
 func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
@@ -165,6 +166,10 @@ func writeMatches(writer io.Writer, matches []recentMatch, heroes map[int]string
 	}
 	if includeTitle {
 		fmt.Fprintf(writer, "Последние матчи (%s):\n", playerName)
+		isWin, streak := calcStreak(matches)
+		if badge := formatStreakBadge(isWin, streak, false); badge != "" {
+			fmt.Fprintf(writer, "%s\n", badge)
+		}
 	}
 	fmt.Fprintf(writer, "%-16s  %-12s  %-4s  %-7s  %-6s\n", "Дата", "Герой", "Итог", "K/D/A", "Длит.")
 	for _, m := range matches {
@@ -217,8 +222,14 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 			continue
 		}
 
+		isWin, streak := calcStreak(matches)
+		streakBadge := formatStreakBadge(isWin, streak, false)
+		summary := formatMatchSummary(player.PersonaName, matches[0], heroes)
+		if streakBadge != "" {
+			summary += "\n" + streakBadge
+		}
 		return matchNotification{
-			Text:      formatMatchSummary(player.PersonaName, matches[0], heroes),
+			Text:      summary,
 			MatchID:   matches[0].MatchID,
 			AccountID: accountID,
 		}, nil
