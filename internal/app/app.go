@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -40,7 +41,11 @@ func Run() error {
 
 	heroes, err := fetchHeroes()
 	if err != nil {
-		return err
+		log.Printf("warning: fetchHeroes: %v; using fallback", err)
+		heroes = loadFallbackHeroes()
+	}
+	if len(heroes) == 0 {
+		return fmt.Errorf("no heroes available: %w", err)
 	}
 
 	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))

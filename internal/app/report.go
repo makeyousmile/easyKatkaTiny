@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ type matchNotification struct {
 	MatchID   int64
 	AccountID int64
 	ParseMode string
+	PhotoData []byte
 }
 
 func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
@@ -203,20 +205,74 @@ func formatMatchSummary(playerName string, match recentMatch, heroes map[int]str
 	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
 }
 
+func buildDemoTestMatchSummary(heroes map[int]string) (matchNotification, error) {
+	demoMatch := recentMatch{
+		MatchID:     0,
+		HeroID:      1, // Anti-Mage
+		Kills:       14,
+		Deaths:      3,
+		Assists:     8,
+		Duration:    2145,
+		PlayerSlot:  0,
+		RadiantWin:  true,
+		HeroDamage:  32450,
+		GoldPerMin:  745,
+		TowerDamage: 12100,
+		LastHits:    385,
+	}
+	playerName := "EasyKatka Test"
+	streakBadge := formatStreakBadge(true, 3, false)
+	summary := "⚠️ <i>(OpenDota API временно недоступен — тестовый образец)</i>\n" + formatMatchSummary(playerName, demoMatch, heroes)
+	if streakBadge != "" {
+		summary += "\n" + streakBadge
+	}
+	cardData, ruinAnalysis, _ := buildMatchCard(0, demoMatch, playerName, "", heroes, true, 3)
+	ruinAnalysis.MatchRuiners = []MatchPlayerRuin{
+		{
+			PlayerName: "ToxicTeammate",
+			HeroID:     14, // Pudge
+			HeroName:   "Pudge",
+			PlayerSlot: 2,
+			IsTracked:  false,
+			IsAlly:     true,
+			Analysis: RuinAnalysis{
+				Score:    75,
+				IsRuiner: true,
+				Verdict:  "Руинер",
+				Reasons: []string{
+					"Умышленный фид (15 смертей при 1/15/2)",
+					"AFK с Shadow Amulet",
+				},
+			},
+		},
+	}
+	if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+		summary += "\n" + alert
+	}
+	return matchNotification{
+		Text:      summary,
+		MatchID:   0,
+		AccountID: 0,
+		PhotoData: cardData,
+	}, nil
+}
+
 func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNotification, error) {
 	if len(accountIDs) == 0 {
-		return matchNotification{}, fmt.Errorf("нет аккаунтов для тестового сообщения")
+		return buildDemoTestMatchSummary(heroes)
 	}
 
 	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
 		if err != nil {
-			return matchNotification{}, err
+			log.Printf("buildTestMatchSummary: fetchPlayerProfile failed (%v), falling back to demo", err)
+			return buildDemoTestMatchSummary(heroes)
 		}
 
 		matches, err := fetchRecentMatches(accountID)
 		if err != nil {
-			return matchNotification{}, err
+			log.Printf("buildTestMatchSummary: fetchRecentMatches failed (%v), falling back to demo", err)
+			return buildDemoTestMatchSummary(heroes)
 		}
 		if len(matches) == 0 {
 			continue
@@ -228,14 +284,19 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 		if streakBadge != "" {
 			summary += "\n" + streakBadge
 		}
+		cardData, ruinAnalysis, _ := buildMatchCard(accountID, matches[0], player.PersonaName, player.AvatarFull, heroes, isWin, streak)
+		if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+			summary += "\n" + alert
+		}
 		return matchNotification{
 			Text:      summary,
 			MatchID:   matches[0].MatchID,
 			AccountID: accountID,
+			PhotoData: cardData,
 		}, nil
 	}
 
-	return matchNotification{}, fmt.Errorf("не найдено ни одного матча для тестового сообщения")
+	return buildDemoTestMatchSummary(heroes)
 }
 
 func findPlayerInMatch(details matchDetails, accountID int64) *matchDetailsPlayer {
@@ -286,6 +347,64 @@ func formatMatchDetailsMessage(details matchDetails, accountID int64, heroes map
 		fmt.Sprintf("<b>Match ID:</b> <code>%d</code>", details.MatchID),
 		fmt.Sprintf("<a href=\"https://www.opendota.com/matches/%d\">OpenDota</a>", details.MatchID),
 	}
+
+	ruinAnalysis := EvaluateRuin(RuinEvaluationInput{
+		Duration:     details.Duration,
+		Kills:        player.Kills,
+		Deaths:       player.Deaths,
+		Assists:      player.Assists,
+		GPM:          player.GPM,
+		XPM:          player.XPM,
+		HeroDamage:   player.HeroDamage,
+		NetWorth:     player.NetWorth,
+		LeaverStatus: player.LeaverStatus,
+		Pings:        player.Pings,
+		Items:        itemList,
+		IsWin:        matchWin(recentMatch{PlayerSlot: player.PlayerSlot, RadiantWin: details.RadiantWin}),
+	})
+
+	ruinStatus := "✅ Чисто"
+	if ruinAnalysis.IsRuiner {
+		ruinStatus = fmt.Sprintf("🚨 <b>РУИНЕР</b> (Score: %d/100: %s)", ruinAnalysis.Score, escapeHTML(strings.Join(ruinAnalysis.Reasons, ", ")))
+	} else if ruinAnalysis.IsSuspect {
+		ruinStatus = fmt.Sprintf("⚠️ <b>Подозрение</b> (Score: %d/100: %s)", ruinAnalysis.Score, escapeHTML(strings.Join(ruinAnalysis.Reasons, ", ")))
+	}
+	lines = append(lines, fmt.Sprintf("<b>Статус игрока:</b> %s", ruinStatus))
+
+	matchRuiners := EvaluateMatchRuiners(details, accountID, player.PlayerSlot, heroes, itemNames)
+	if len(matchRuiners) > 0 {
+		ruinerCount := 0
+		for _, r := range matchRuiners {
+			if r.Analysis.IsRuiner {
+				ruinerCount++
+			}
+		}
+		if ruinerCount > 0 {
+			lines = append(lines, "", fmt.Sprintf("<b>🚨 Руинеры в матче (%d):</b>", len(matchRuiners)))
+		} else {
+			lines = append(lines, "", fmt.Sprintf("<b>⚠️ Подозрения на руин в матче (%d):</b>", len(matchRuiners)))
+		}
+		for _, r := range matchRuiners {
+			teamLabel := "Союзник"
+			if r.IsTracked {
+				teamLabel = "Игрок (Вы)"
+			} else if !r.IsAlly {
+				teamLabel = "Противник"
+			}
+			badge := "РУИНЕР"
+			if !r.Analysis.IsRuiner {
+				badge = "ПОДОЗРЕНИЕ"
+			}
+			lines = append(lines, fmt.Sprintf("• <b>[%s]</b> %s (%s): <b>%s</b> (<code>%d/100</code>)",
+				teamLabel, escapeHTML(r.HeroName), escapeHTML(r.PlayerName), badge, r.Analysis.Score))
+			if len(r.Analysis.Reasons) > 0 {
+				lines = append(lines, fmt.Sprintf("  <i>Причины: %s</i>", escapeHTML(strings.Join(r.Analysis.Reasons, ", "))))
+			}
+		}
+	} else {
+		lines = append(lines, "<b>Руинеры в матче:</b> ✅ Все 10 игроков играли чисто")
+	}
+
 	return strings.Join(lines, "\n"), nil
 }
 

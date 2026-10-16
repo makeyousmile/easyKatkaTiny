@@ -1,35 +1,62 @@
 package app
 
-/*
-#include <stdlib.h>
-*/
-import "C"
-
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
+	"log"
+	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
-	"unsafe"
 )
+
+//go:embed assets/heroes.json
+var embeddedHeroesJSON []byte
+
+//go:embed assets/items.json
+var embeddedItemsJSON []byte
 
 type hero struct {
 	ID            int    `json:"id"`
+	Name          string `json:"name"`
 	LocalizedName string `json:"localized_name"`
 }
 
+var (
+	heroShortNamesMu sync.RWMutex
+	heroShortNames   = make(map[int]string)
+)
+
+func setHeroShortName(id int, name string) {
+	heroShortNamesMu.Lock()
+	defer heroShortNamesMu.Unlock()
+	heroShortNames[id] = strings.TrimPrefix(name, "npc_dota_hero_")
+}
+
+func getHeroShortName(id int) string {
+	heroShortNamesMu.RLock()
+	defer heroShortNamesMu.RUnlock()
+	return heroShortNames[id]
+}
+
 type recentMatch struct {
-	MatchID    int64 `json:"match_id"`
-	HeroID     int   `json:"hero_id"`
-	Kills      int   `json:"kills"`
-	Deaths     int   `json:"deaths"`
-	Assists    int   `json:"assists"`
-	Duration   int   `json:"duration"`
-	StartTime  int64 `json:"start_time"`
-	PlayerSlot int   `json:"player_slot"`
-	RadiantWin bool  `json:"radiant_win"`
+	MatchID     int64 `json:"match_id"`
+	HeroID      int   `json:"hero_id"`
+	Kills       int   `json:"kills"`
+	Deaths      int   `json:"deaths"`
+	Assists     int   `json:"assists"`
+	Duration    int   `json:"duration"`
+	StartTime   int64 `json:"start_time"`
+	PlayerSlot  int   `json:"player_slot"`
+	RadiantWin  bool  `json:"radiant_win"`
+	HeroDamage  int   `json:"hero_damage"`
+	GoldPerMin  int   `json:"gold_per_min"`
+	TowerDamage  int   `json:"tower_damage"`
+	LastHits     int   `json:"last_hits"`
+	LeaverStatus int   `json:"leaver_status"`
 }
 
 type playerProfile struct {
@@ -98,6 +125,8 @@ type matchDetailsPlayer struct {
 	Backpack1    int    `json:"backpack_1"`
 	Backpack2    int    `json:"backpack_2"`
 	NeutralItem  int    `json:"item_neutral"`
+	Pings        int    `json:"pings"`
+	LeaverStatus int    `json:"leaver_status"`
 }
 
 type itemConstantsEntry struct {
@@ -128,13 +157,58 @@ func (l *rateLimiter) Wait() {
 	<-l.tick
 }
 
+func loadFallbackHeroes() map[int]string {
+	var heroes map[string]hero
+	if err := json.Unmarshal(embeddedHeroesJSON, &heroes); err != nil {
+		log.Printf("failed to parse embedded heroes: %v", err)
+		return make(map[int]string)
+	}
+	result := make(map[int]string, len(heroes))
+	for _, h := range heroes {
+		if h.Name != "" {
+			setHeroShortName(h.ID, h.Name)
+		}
+		if h.LocalizedName != "" {
+			result[h.ID] = h.LocalizedName
+		}
+	}
+	return result
+}
+
+func loadFallbackItems() map[int]string {
+	var items map[string]itemConstantsEntry
+	if err := json.Unmarshal(embeddedItemsJSON, &items); err != nil {
+		log.Printf("failed to parse embedded items: %v", err)
+		return make(map[int]string)
+	}
+	result := make(map[int]string, len(items))
+	for _, item := range items {
+		if item.ID == 0 || strings.TrimSpace(item.DName) == "" {
+			continue
+		}
+		result[item.ID] = strings.TrimSpace(item.DName)
+	}
+	return result
+}
+
+func init() {
+	loadFallbackHeroes()
+}
+
 func fetchHeroes() (map[int]string, error) {
+	fallback := loadFallbackHeroes()
+	if len(fallback) > 0 {
+		return fallback, nil
+	}
 	var heroes []hero
 	if err := getOpendotaJSON(baseURL+heroesURL, &heroes); err != nil {
 		return nil, err
 	}
 	result := make(map[int]string, len(heroes))
 	for _, h := range heroes {
+		if h.Name != "" {
+			setHeroShortName(h.ID, h.Name)
+		}
 		if h.LocalizedName == "" {
 			continue
 		}
@@ -218,6 +292,37 @@ func fetchItemNames() (map[int]string, error) {
 	return result, nil
 }
 
+var (
+	itemNamesCacheMu sync.RWMutex
+	itemNamesCache   map[int]string
+)
+
+func getItemNames() (map[int]string, error) {
+	itemNamesCacheMu.RLock()
+	if len(itemNamesCache) > 0 {
+		defer itemNamesCacheMu.RUnlock()
+		return itemNamesCache, nil
+	}
+	itemNamesCacheMu.RUnlock()
+
+	itemNamesCacheMu.Lock()
+	defer itemNamesCacheMu.Unlock()
+	if len(itemNamesCache) > 0 {
+		return itemNamesCache, nil
+	}
+	fallback := loadFallbackItems()
+	if len(fallback) > 0 {
+		itemNamesCache = fallback
+		return fallback, nil
+	}
+	names, err := fetchItemNames()
+	if err != nil {
+		return nil, err
+	}
+	itemNamesCache = names
+	return names, nil
+}
+
 func sortItemNames(items []string) []string {
 	filtered := items[:0]
 	for _, item := range items {
@@ -230,6 +335,21 @@ func sortItemNames(items []string) []string {
 	return filtered
 }
 
+var sharedHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
+func formatOpenDotaError(err error) string {
+	if err == nil {
+		return ""
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "Client.Timeout") || strings.Contains(errStr, "deadline exceeded") || strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "Network is unreachable") {
+		return "⚠️ Сервер OpenDota временно не отвечает (таймаут). Пожалуйста, попробуйте чуть позже."
+	}
+	return fmt.Sprintf("Ошибка: %s", errStr)
+}
+
 func getOpendotaJSON(url string, out any) error {
 	return getJSON(url, out, opendotaLimiter)
 }
@@ -239,24 +359,24 @@ func getJSON(url string, out any, limiter *rateLimiter) error {
 		limiter.Wait()
 	}
 
-	outFile := "/tmp/easykatka_opendota_tmp.json"
-	os.Remove(outFile)
-
-	cmdStr := "curl -s -L --max-time 15 \"" + url + "\" > \"" + outFile + "\""
-	cCmd := C.CString(cmdStr)
-	defer C.free(unsafe.Pointer(cCmd))
-
-	res := C.system(cCmd)
-	if res != 0 {
-		return fmt.Errorf("request %s failed: curl exited with status %d", url, res)
-	}
-
-	data, err := os.ReadFile(outFile)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("read response %s: %w", url, err)
+		return fmt.Errorf("create request %s: %w", url, err)
+	}
+	req.Header.Set("User-Agent", "easyKatka/2.0")
+
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request %s failed: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request %s returned status %d: %s", url, resp.StatusCode, string(body))
 	}
 
-	if err := json.Unmarshal(data, out); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode %s: %w", url, err)
 	}
 	return nil

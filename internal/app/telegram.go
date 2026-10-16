@@ -1,18 +1,16 @@
 package app
 
-/*
-#include <stdlib.h>
-*/
-import "C"
-
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 )
 
 type telegramUpdate struct {
@@ -73,13 +71,13 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 				for _, accountID := range accountIDs {
 					player, err := fetchPlayerProfile(accountID)
 					if err != nil {
-						sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
-						continue
+						sendTelegramMessage(apiBase, upd.Message.Chat.ID, formatOpenDotaError(err), "", nil)
+						break
 					}
 					matches, err := fetchRecentMatches(accountID)
 					if err != nil {
-						sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
-						continue
+						sendTelegramMessage(apiBase, upd.Message.Chat.ID, formatOpenDotaError(err), "", nil)
+						break
 					}
 					winrate := calcWinrate(matches, 20)
 					isWin, streak := calcStreak(matches)
@@ -97,6 +95,19 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 						header = fmt.Sprintf("<b>Последние матчи (%s)</b>\n%s\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), streakBadge, winrate)
 					} else {
 						header = fmt.Sprintf("<b>Последние матчи (%s)</b>\n<b>Winrate (за 20 игр): %.1f%%</b>\n<b>✅ победа, ❌ поражение</b>\n", escapeHTML(name), winrate)
+					}
+					if len(matches) > 0 {
+						cardBytes, ruinAnalysis, err := buildMatchCard(accountID, matches[0], player.PersonaName, player.AvatarFull, heroes, isWin, streak)
+						if err == nil && len(cardBytes) > 0 {
+							cardCaption := header
+							if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+								cardCaption += "\n" + alert
+							}
+							markup := buildMatchDetailsMarkup(matchNotification{MatchID: matches[0].MatchID, AccountID: accountID})
+							if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, cardBytes, cardCaption, "HTML", markup); err == nil {
+								continue
+							}
+						}
 					}
 					if player.AvatarFull != "" {
 						if err := sendTelegramPhoto(apiBase, upd.Message.Chat.ID, player.AvatarFull, header, "HTML", nil); err != nil {
@@ -118,9 +129,15 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 				continue
 			}
 			if isRatingCommand(text) {
+				cardBytes, err := buildRatingCardImage(accountStore.Get())
+				if err == nil && len(cardBytes) > 0 {
+					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, cardBytes, "", "", nil); err == nil {
+						continue
+					}
+				}
 				table, err := buildRatingTable(accountStore.Get())
 				if err != nil {
-					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, formatOpenDotaError(err), "", nil)
 					continue
 				}
 				header := "<b>Рейтинг по Winrate (50)</b>\n"
@@ -138,7 +155,7 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 				}
 				table, err := buildBestFriendsTable(accountStore.Get(), limit)
 				if err != nil {
-					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
+					sendTelegramMessage(apiBase, upd.Message.Chat.ID, formatOpenDotaError(err), "", nil)
 					continue
 				}
 				header := fmt.Sprintf("<b>Лучшие напарники по Winrate (за последние %d игр)</b>\n", limit)
@@ -161,7 +178,13 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 					sendTelegramMessage(apiBase, upd.Message.Chat.ID, fmt.Sprintf("Ошибка: %s", err.Error()), "", nil)
 					continue
 				}
-				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", buildMatchDetailsMarkup(msg)); err != nil {
+				markup := buildMatchDetailsMarkup(msg)
+				if len(msg.PhotoData) > 0 {
+					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, msg.Text, "", markup); err == nil {
+						continue
+					}
+				}
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", markup); err != nil {
 					return err
 				}
 				continue
@@ -183,27 +206,19 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 }
 
 func sendPostJSON(url string, body []byte) error {
-	outFile := "/tmp/easykatka_tg_tmp.json"
-	os.Remove(outFile)
-
-	payloadFile := "/tmp/easykatka_tg_payload.json"
-	os.Remove(payloadFile)
-	err := os.WriteFile(payloadFile, body, 0644)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("write telegram payload: %w", err)
+		return fmt.Errorf("create telegram post request: %w", err)
 	}
-	defer os.Remove(payloadFile)
+	req.Header.Set("Content-Type", "application/json")
 
-	cmdStr := "curl -s -L -X POST -H \"Content-Type: application/json\" -d @" + payloadFile + " \"" + url + "\" > \"" + outFile + "\""
-	cCmd := C.CString(cmdStr)
-	defer C.free(unsafe.Pointer(cCmd))
-
-	res := C.system(cCmd)
-	if res != 0 {
-		return fmt.Errorf("curl exited with status %d", res)
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send telegram post request: %w", err)
 	}
+	defer resp.Body.Close()
 
-	respData, err := os.ReadFile(outFile)
+	respData, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read telegram response: %w", err)
 	}
@@ -258,6 +273,76 @@ func sendTelegramPhoto(apiBase string, chatID int64, photoURL string, caption st
 		return fmt.Errorf("marshal telegram photo: %w", err)
 	}
 	return sendPostJSON(apiBase+"/sendPhoto", body)
+}
+
+func sendTelegramPhotoBytes(apiBase string, chatID int64, photoData []byte, caption string, parseMode string, replyMarkup any) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	if err := writer.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return fmt.Errorf("write chat_id: %w", err)
+	}
+
+	part, err := writer.CreateFormFile("photo", "card.png")
+	if err != nil {
+		return fmt.Errorf("create form photo file: %w", err)
+	}
+	if _, err := part.Write(photoData); err != nil {
+		return fmt.Errorf("write photo bytes: %w", err)
+	}
+
+	if parseMode != "" {
+		if err := writer.WriteField("parse_mode", parseMode); err != nil {
+			return fmt.Errorf("write parse_mode: %w", err)
+		}
+	}
+
+	if caption != "" {
+		if err := writer.WriteField("caption", caption); err != nil {
+			return fmt.Errorf("write caption: %w", err)
+		}
+	}
+
+	if replyMarkup != nil {
+		if b, err := json.Marshal(replyMarkup); err == nil {
+			if err := writer.WriteField("reply_markup", string(b)); err != nil {
+				return fmt.Errorf("write reply_markup: %w", err)
+			}
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, apiBase+"/sendPhoto", &body)
+	if err != nil {
+		return fmt.Errorf("create sendPhoto request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sendPhoto request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read sendPhoto response: %w", err)
+	}
+
+	type tgBasicResponse struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	var tgResp tgBasicResponse
+	if err := json.Unmarshal(respData, &tgResp); err == nil {
+		if !tgResp.OK {
+			return fmt.Errorf("telegram failed: %s", tgResp.Description)
+		}
+	}
+	return nil
 }
 
 func splitText(text string, maxLen int) []string {
@@ -341,6 +426,13 @@ func telegramNotifier(token string) func(matchNotification) {
 	apiBase := fmt.Sprintf(telegramBaseURL, token)
 	return func(msg matchNotification) {
 		replyMarkup := buildMatchDetailsMarkup(msg)
+		if len(msg.PhotoData) > 0 {
+			if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, msg.Text, msg.ParseMode, replyMarkup); err == nil {
+				return
+			} else {
+				fmt.Fprintf(os.Stderr, "telegram notify photo error: %s\n", err.Error())
+			}
+		}
 		if err := sendTelegramMessage(apiBase, chatID, msg.Text, msg.ParseMode, replyMarkup); err != nil {
 			fmt.Fprintf(os.Stderr, "telegram notify error: %s\n", err.Error())
 		}

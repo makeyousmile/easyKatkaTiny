@@ -10,6 +10,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 	accountIDs := accountStore.Get()
 	lastMatch := make(map[int64]int64, len(accountIDs))
 	names := make(map[int64]string, len(accountIDs))
+	avatars := make(map[int64]string, len(accountIDs))
 	var startupStreaks []playerStreak
 	for _, accountID := range accountIDs {
 		player, err := fetchPlayerProfile(accountID)
@@ -17,6 +18,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 			fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
 		} else {
 			names[accountID] = fallbackName(player.PersonaName)
+			avatars[accountID] = player.AvatarFull
 		}
 		matches, err := fetchRecentMatches(accountID)
 		if err != nil {
@@ -64,6 +66,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 					fmt.Fprintf(os.Stderr, "profile error: %s\n", err.Error())
 				} else {
 					names[accountID] = fallbackName(player.PersonaName)
+					avatars[accountID] = player.AvatarFull
 				}
 			}
 			matches, err := fetchRecentMatches(accountID)
@@ -95,10 +98,15 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 				if badge := formatStreakBadge(isWin, streak, false); badge != "" {
 					summary += "\n" + badge
 				}
+				cardData, ruinAnalysis, _ := buildMatchCard(accountID, newMatches[i], names[accountID], avatars[accountID], heroes, isWin, streak)
+				if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+					summary += "\n" + alert
+				}
 				notify(matchNotification{
 					Text:      summary,
 					MatchID:   newMatches[i].MatchID,
 					AccountID: accountID,
+					PhotoData: cardData,
 				})
 			}
 			lastMatch[accountID] = matches[0].MatchID
