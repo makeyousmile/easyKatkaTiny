@@ -202,7 +202,7 @@ func formatMatchSummary(playerName string, match recentMatch, heroes map[int]str
 	}
 	duration := formatDuration(match.Duration)
 	kda := fmt.Sprintf("%d/%d/%d", match.Kills, match.Deaths, match.Assists)
-	return fmt.Sprintf("%s | %s | %s | %s | %s", result, fallbackName(playerName), heroName, kda, duration)
+	return fmt.Sprintf("%s | %s | %s | %s | %s", result, escapeHTML(fallbackName(playerName)), escapeHTML(heroName), kda, duration)
 }
 
 func buildDemoTestMatchSummary(heroes map[int]string) (matchNotification, error) {
@@ -221,7 +221,7 @@ func buildDemoTestMatchSummary(heroes map[int]string) (matchNotification, error)
 		LastHits:    385,
 	}
 	playerName := "EasyKatka Test"
-	streakBadge := formatStreakBadge(true, 3, false)
+	streakBadge := formatStreakBadge(true, 3, true)
 	summary := "⚠️ <i>(OpenDota API временно недоступен — тестовый образец)</i>\n" + formatMatchSummary(playerName, demoMatch, heroes)
 	if streakBadge != "" {
 		summary += "\n" + streakBadge
@@ -253,6 +253,7 @@ func buildDemoTestMatchSummary(heroes map[int]string) (matchNotification, error)
 		Text:      summary,
 		MatchID:   0,
 		AccountID: 0,
+		ParseMode: "HTML",
 		PhotoData: cardData,
 	}, nil
 }
@@ -279,7 +280,7 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 		}
 
 		isWin, streak := calcStreak(matches)
-		streakBadge := formatStreakBadge(isWin, streak, false)
+		streakBadge := formatStreakBadge(isWin, streak, true)
 		summary := formatMatchSummary(player.PersonaName, matches[0], heroes)
 		if streakBadge != "" {
 			summary += "\n" + streakBadge
@@ -292,6 +293,7 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 			Text:      summary,
 			MatchID:   matches[0].MatchID,
 			AccountID: accountID,
+			ParseMode: "HTML",
 			PhotoData: cardData,
 		}, nil
 	}

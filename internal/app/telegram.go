@@ -180,11 +180,20 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 				}
 				markup := buildMatchDetailsMarkup(msg)
 				if len(msg.PhotoData) > 0 {
-					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, msg.Text, "", markup); err == nil {
+					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, msg.Text, msg.ParseMode, markup); err == nil {
 						continue
+					} else if msg.ParseMode != "" {
+						if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, stripHTML(msg.Text), "", markup); err == nil {
+							continue
+						}
 					}
 				}
-				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, "", markup); err != nil {
+				if err := sendTelegramMessage(apiBase, upd.Message.Chat.ID, msg.Text, msg.ParseMode, markup); err != nil {
+					if msg.ParseMode != "" {
+						if err2 := sendTelegramMessage(apiBase, upd.Message.Chat.ID, stripHTML(msg.Text), "", markup); err2 == nil {
+							continue
+						}
+					}
 					return err
 				}
 				continue
@@ -431,12 +440,43 @@ func telegramNotifier(token string) func(matchNotification) {
 				return
 			} else {
 				fmt.Fprintf(os.Stderr, "telegram notify photo error: %s\n", err.Error())
+				if msg.ParseMode != "" {
+					if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, stripHTML(msg.Text), "", replyMarkup); err == nil {
+						return
+					}
+				}
 			}
 		}
 		if err := sendTelegramMessage(apiBase, chatID, msg.Text, msg.ParseMode, replyMarkup); err != nil {
 			fmt.Fprintf(os.Stderr, "telegram notify error: %s\n", err.Error())
+			if msg.ParseMode != "" {
+				_ = sendTelegramMessage(apiBase, chatID, stripHTML(msg.Text), "", replyMarkup)
+			}
 		}
 	}
+}
+
+func stripHTML(input string) string {
+	var builder strings.Builder
+	inTag := false
+	for _, r := range input {
+		if r == '<' {
+			inTag = true
+			continue
+		}
+		if r == '>' {
+			inTag = false
+			continue
+		}
+		if !inTag {
+			builder.WriteRune(r)
+		}
+	}
+	res := builder.String()
+	res = strings.ReplaceAll(res, "&lt;", "<")
+	res = strings.ReplaceAll(res, "&gt;", ">")
+	res = strings.ReplaceAll(res, "&amp;", "&")
+	return res
 }
 
 func buildMatchDetailsMarkup(msg matchNotification) any {

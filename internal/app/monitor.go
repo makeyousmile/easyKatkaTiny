@@ -95,7 +95,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 			for i := len(newMatches) - 1; i >= 0; i-- {
 				summary := formatMatchSummary(names[accountID], newMatches[i], heroes)
 				isWin, streak := calcStreak(matches[i:])
-				if badge := formatStreakBadge(isWin, streak, false); badge != "" {
+				if badge := formatStreakBadge(isWin, streak, true); badge != "" {
 					summary += "\n" + badge
 				}
 				cardData, ruinAnalysis, _ := buildMatchCard(accountID, newMatches[i], names[accountID], avatars[accountID], heroes, isWin, streak)
@@ -106,6 +106,7 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 					Text:      summary,
 					MatchID:   newMatches[i].MatchID,
 					AccountID: accountID,
+					ParseMode: "HTML",
 					PhotoData: cardData,
 				})
 			}

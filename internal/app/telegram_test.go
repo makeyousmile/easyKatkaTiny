@@ -63,3 +63,12 @@ func TestParseMatchCallbackData(t *testing.T) {
 		t.Fatal("expected invalid callback data to fail")
 	}
 }
+
+func TestStripHTML(t *testing.T) {
+	in := "<b>Title</b>\n• <i>Reason &amp; info</i> <code>100/100</code>"
+	want := "Title\n• Reason & info 100/100"
+	if got := stripHTML(in); got != want {
+		t.Fatalf("stripHTML got %q, want %q", got, want)
+	}
+}
+

@@ -290,7 +290,14 @@ func formatRuinAlert(analysis RuinAnalysis) string {
 			}
 		}
 
-		for _, r := range analysis.MatchRuiners {
+		maxDisplay := 4
+		for i, r := range analysis.MatchRuiners {
+			if i >= maxDisplay {
+				remaining := len(analysis.MatchRuiners) - maxDisplay
+				b.WriteString(fmt.Sprintf("\n• <i>...и ещё %d %s (подробнее по кнопке ниже)</i>",
+					remaining, pluralize(remaining, "игрок", "игрока", "игроков")))
+				break
+			}
 			b.WriteString("\n")
 			teamTag := "Союзник"
 			if r.IsTracked {
