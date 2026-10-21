@@ -6,4 +6,5 @@ services:
       - .env
     volumes:
       - ./account_id:/app/account_id:ro
+      - ./data:/app/data
     restart: unless-stopped

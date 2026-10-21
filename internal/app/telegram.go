@@ -99,7 +99,7 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 					if len(matches) > 0 {
 						cardBytes, ruinAnalysis, err := buildMatchCard(accountID, matches[0], player.PersonaName, player.AvatarFull, heroes, isWin, streak)
 						if err == nil && len(cardBytes) > 0 {
-							cardCaption := header
+							cardCaption := fmt.Sprintf("<b>Игрок:</b> %s | <b>Winrate (20):</b> %.1f%%", escapeHTML(name), winrate)
 							if alert := formatRuinAlert(ruinAnalysis); alert != "" {
 								cardCaption += "\n" + alert
 							}
@@ -179,11 +179,12 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 					continue
 				}
 				markup := buildMatchDetailsMarkup(msg)
+				caption := msg.PhotoCaption
 				if len(msg.PhotoData) > 0 {
-					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, msg.Text, msg.ParseMode, markup); err == nil {
+					if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, caption, msg.ParseMode, markup); err == nil {
 						continue
 					} else if msg.ParseMode != "" {
-						if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, stripHTML(msg.Text), "", markup); err == nil {
+						if err := sendTelegramPhotoBytes(apiBase, upd.Message.Chat.ID, msg.PhotoData, stripHTML(caption), "", markup); err == nil {
 							continue
 						}
 					}
@@ -196,6 +197,10 @@ func runTelegramBot(token string, accountStore *accountIDStore, heroes map[int]s
 					}
 					return err
 				}
+				continue
+			}
+			if isVersionCommand(text) {
+				sendTelegramMessage(apiBase, upd.Message.Chat.ID, VersionChangelog, "HTML", nil)
 				continue
 			}
 			if isReloadAccsCommand(text) {
@@ -435,13 +440,17 @@ func telegramNotifier(token string) func(matchNotification) {
 	apiBase := fmt.Sprintf(telegramBaseURL, token)
 	return func(msg matchNotification) {
 		replyMarkup := buildMatchDetailsMarkup(msg)
+		caption := msg.PhotoCaption
+		if len(msg.PhotoData) == 0 {
+			caption = msg.Text
+		}
 		if len(msg.PhotoData) > 0 {
-			if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, msg.Text, msg.ParseMode, replyMarkup); err == nil {
+			if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, caption, msg.ParseMode, replyMarkup); err == nil {
 				return
 			} else {
 				fmt.Fprintf(os.Stderr, "telegram notify photo error: %s\n", err.Error())
 				if msg.ParseMode != "" {
-					if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, stripHTML(msg.Text), "", replyMarkup); err == nil {
+					if err := sendTelegramPhotoBytes(apiBase, chatID, msg.PhotoData, stripHTML(caption), "", replyMarkup); err == nil {
 						return
 					}
 				}

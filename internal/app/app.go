@@ -51,8 +51,10 @@ func Run() error {
 	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))
 	if telegramToken != "" {
 		if notify := telegramNotifier(telegramToken); notify != nil {
+			checkAndNotifyNewVersion(notify, defaultVersionFilePath)
 			go monitorMatches(accountStore, heroes, notify)
 		} else {
+			checkAndNotifyNewVersion(nil, defaultVersionFilePath)
 			go monitorMatches(accountStore, heroes, nil)
 		}
 		return runTelegramBot(telegramToken, accountStore, heroes)

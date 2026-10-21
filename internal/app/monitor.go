@@ -99,15 +99,18 @@ func monitorMatches(accountStore *accountIDStore, heroes map[int]string, notify 
 					summary += "\n" + badge
 				}
 				cardData, ruinAnalysis, _ := buildMatchCard(accountID, newMatches[i], names[accountID], avatars[accountID], heroes, isWin, streak)
+				caption := ""
 				if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+					caption = alert
 					summary += "\n" + alert
 				}
 				notify(matchNotification{
-					Text:      summary,
-					MatchID:   newMatches[i].MatchID,
-					AccountID: accountID,
-					ParseMode: "HTML",
-					PhotoData: cardData,
+					Text:         summary,
+					PhotoCaption: caption,
+					MatchID:      newMatches[i].MatchID,
+					AccountID:    accountID,
+					ParseMode:    "HTML",
+					PhotoData:    cardData,
 				})
 			}
 			lastMatch[accountID] = matches[0].MatchID

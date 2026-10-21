@@ -109,3 +109,18 @@ func TestIsReloadAccsCommand(t *testing.T) {
 		t.Fatal("expected false for empty input")
 	}
 }
+
+func TestIsVersionCommand(t *testing.T) {
+	cases := []string{"/version", "/version@bot", "/version now", "/changelog", "/changelog@bot"}
+	for _, input := range cases {
+		if !isVersionCommand(input) {
+			t.Fatalf("expected true for %q", input)
+		}
+	}
+	if isVersionCommand("") {
+		t.Fatal("expected false for empty input")
+	}
+	if isVersionCommand("/other") {
+		t.Fatal("expected false for /other")
+	}
+}

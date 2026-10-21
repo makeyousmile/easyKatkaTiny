@@ -10,11 +10,12 @@ import (
 )
 
 type matchNotification struct {
-	Text      string
-	MatchID   int64
-	AccountID int64
-	ParseMode string
-	PhotoData []byte
+	Text         string
+	PhotoCaption string
+	MatchID      int64
+	AccountID    int64
+	ParseMode    string
+	PhotoData    []byte
 }
 
 func buildReport(accountIDs []int64, heroes map[int]string) (string, error) {
@@ -246,15 +247,18 @@ func buildDemoTestMatchSummary(heroes map[int]string) (matchNotification, error)
 			},
 		},
 	}
+	caption := ""
 	if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+		caption = alert
 		summary += "\n" + alert
 	}
 	return matchNotification{
-		Text:      summary,
-		MatchID:   0,
-		AccountID: 0,
-		ParseMode: "HTML",
-		PhotoData: cardData,
+		Text:         summary,
+		PhotoCaption: caption,
+		MatchID:      0,
+		AccountID:    0,
+		ParseMode:    "HTML",
+		PhotoData:    cardData,
 	}, nil
 }
 
@@ -286,15 +290,18 @@ func buildTestMatchSummary(accountIDs []int64, heroes map[int]string) (matchNoti
 			summary += "\n" + streakBadge
 		}
 		cardData, ruinAnalysis, _ := buildMatchCard(accountID, matches[0], player.PersonaName, player.AvatarFull, heroes, isWin, streak)
+		caption := ""
 		if alert := formatRuinAlert(ruinAnalysis); alert != "" {
+			caption = alert
 			summary += "\n" + alert
 		}
 		return matchNotification{
-			Text:      summary,
-			MatchID:   matches[0].MatchID,
-			AccountID: accountID,
-			ParseMode: "HTML",
-			PhotoData: cardData,
+			Text:         summary,
+			PhotoCaption: caption,
+			MatchID:      matches[0].MatchID,
+			AccountID:    accountID,
+			ParseMode:    "HTML",
+			PhotoData:    cardData,
 		}, nil
 	}
 

@@ -110,3 +110,20 @@ func isReloadAccsCommand(text string) bool {
 	}
 	return false
 }
+
+func isVersionCommand(text string) bool {
+	if text == "" {
+		return false
+	}
+	if text == "/version" || text == "/changelog" {
+		return true
+	}
+	if strings.HasPrefix(text, "/version@") || strings.HasPrefix(text, "/changelog@") {
+		return true
+	}
+	if strings.HasPrefix(text, "/version ") || strings.HasPrefix(text, "/changelog ") {
+		return true
+	}
+	return false
+}
+
